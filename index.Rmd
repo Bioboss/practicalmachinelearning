@@ -2,15 +2,26 @@
 title: "Practical Machine Learning Course Project"
 author: "Mikael Engmark"
 date: "8/31/2017"
-output: html_document
+output: 
+  html_document: 
+    keep_md: yes
 ---
 
 ```{r setup, include=FALSE}
+# load libraries
+attach(cars)
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
-## R Markdown
+## Background
+6 participants have been asked to perform barbell lifts correctly and incorrectly in 5 different ways. The data is obtaining from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. 
 
+## Loading data
+```{r}
+
+training <- read.csv("pml-training.csv",header = TRUE, na.strings = c ("","NA"))
+testing <- read.csv("pml-testing.csv",header = TRUE,na.strings = c("","NA"))
+```
 This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
 
 When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
