@@ -9,33 +9,140 @@ output:
 
 ```{r setup, include=FALSE}
 # load libraries
-attach(cars)
 knitr::opts_chunk$set(echo = TRUE)
+library(ggplot2)
 ```
 
 ## Background
-6 participants have been asked to perform barbell lifts correctly and incorrectly in 5 different ways. The data is obtaining from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. 
+6 participants have been asked to perform barbell lifts correctly and incorrectly in 5 different ways (A, B, C, D and E). The data is obtaining from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. 
 
-## Loading data
+## Exploring the data structure 
+
+The two data sets are imported
 ```{r}
-
-training <- read.csv("pml-training.csv",header = TRUE, na.strings = c ("","NA"))
-testing <- read.csv("pml-testing.csv",header = TRUE,na.strings = c("","NA"))
-```
-This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
-
-When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
-
-```{r cars}
-summary(cars)
+data_raw <- read.csv("pml-training.csv",header = TRUE, na.strings = c ("","NA"))
+data_test <- read.csv("pml-testing.csv",header = TRUE,na.strings = c("","NA"))
 ```
 
-## Including Plots
-
-You can also embed plots, for example:
-
-```{r pressure, echo=FALSE}
-plot(pressure)
+Investigating the structure of the provided data (input supressed for readability)
+```{r, echo = FALSE}
+str(data_raw)
 ```
 
-Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+The training data contains 160 columns of which one is the outcome / how the exercise is performed (classe). The first column seams to be the row number whereas the following 6 columns contains data on how the data was collected - such as the name of the person, parts of a time stamp, and 2 apparently related "window" variables. The time should not be a relevant variable for the application of the model. Also, aiming at constructing a general model it is not rational to use the names of the 6 participants in the experiment (although the 20 observations in the test set are from the same 6 persons). Plots with the first two predictor candidates are made to get a feeling for the difference between the participants.
+
+```{r, fig.cap = "Predicter candidate 'roll-belt' vs classe and person"}
+ggplot(data_raw, aes(x=classe, y=roll_belt)) +
+    geom_jitter(aes(color=user_name, fill=user_name)) +
+    # facet_wrap(~ variable, scale="free_y") +
+    scale_color_brewer(type = "qual") +
+    scale_fill_brewer(type = "qual") +
+    labs(x="", y="")
+```
+
+
+```{r, fig.cap = "Predicter candidate 'pitch_belt' vs classe and person"}
+ggplot(data_raw, aes(x=classe, y=pitch_belt)) +
+    geom_jitter(aes(color=user_name, fill=user_name)) +
+    # facet_wrap(~ variable, scale="free_y") +
+    scale_color_brewer(type = "qual") +
+    scale_fill_brewer(type = "qual") +
+    labs(x="", y="")
+```
+
+
+It appears that some of the different ways of performing barbell lifts result in more variance between oberservations from the same person. However, such variance cannot be used to predict outcome of single observations (the 20 test cases)... Using a prediction model based on descition threes such as random forrest, some parts of the algoritm might actually use clear differences between the individuals like Adelmo in 'pitch-belt' as part of their decitions (e.g. pitch-belt of -30 is always "E" - performed by Adelmo). This also means, that the name of the persons is redundant and may actually lead to overfitting of the model.
+
+The names of the discussed variable are saved in a vector for trimming of the data set.
+```{r}
+Irrelevant_vars <- names(data_raw[,c(1:7)])
+```
+
+It is also evident from the str output that several of the remaining variables contains a lot of NA's.
+```{r, echo = FALSE}
+vars <- names(data_raw)
+no_NA_vars <- sapply(data_raw[vars],function(x)sum(is.na(x)))
+length(no_NA_vars[no_NA_vars > 0])
+no_NA_vars[no_NA_vars > 0]
+```
+
+It is clear that excatly 100 of the variables contains 19216 NA's out of 19622 observations. These are not usefull predictors and are therefore removed in the testing data set 
+```{r}
+NA_vars <- names(no_NA_vars[no_NA_vars > 0])
+vars_remove <- c(Irrelevant_vars, NA_vars)
+data_red <- data_raw[, -which(names(data_raw) %in% vars_remove)]
+```
+
+
+## Creating data particions for training and validation of model
+To estimate the in sample and out of sample error, the data set is slit in two using the caret package and 70 % of the data for the model building
+```{r}
+library(caret)
+set.seed(2)
+inTraining <- createDataPartition(data_red$classe, p = 0.70, list = FALSE)
+training <- data_red[inTraining, ]
+validation <- data_red[-inTraining, ]
+
+```
+
+## Looking for low variance parameter
+
+Covariates with little variablity is not usefull predictors... 
+```{r}
+nearZeroVar(training)
+```
+All of the variable seams to contain information
+
+
+## Building a random forrest model
+
+To increase the speed of the model building process parallel computing is performed as described by https://github.com/lgreski/datasciencectacontent/blob/master/markdown/pml-randomForestPerformance.md
+
+The model is performed using 5-fold cross-validation.
+
+```{r}
+library(parallel)
+library(doParallel)
+cluster <- makeCluster(detectCores() - 1) # Leave one core for OS
+registerDoParallel(cluster)
+
+# 5-fold cross-validation 
+fitControl <- trainControl(method = "repeatedcv",
+                     number = 5,
+                     classProbs=TRUE,
+                     savePredictions="all",
+                     allowParallel=TRUE)
+
+model <- train(x = training[,-53],
+               y = training$classe,
+               tuneGrid = data.frame(mtry = c(1,2,3,4,5,6,10,15)), # The number of randomly selected features when each tree is created. The accuracy in each case is calculated based on fitControl
+               method = "rf", 
+               trControl = fitControl)
+
+stopCluster(cluster)
+registerDoSEQ()
+```
+
+8 different random forrest models are prepared according to the tuneGrid specifications in the caret::train command. The final modal used 5 randomly selected features for tree construction to obtain the highest accuracy determined by 5-fold cross-validation.
+```{r}
+plot(model)
+model$finalModel
+save(model, file="barbell_lift_model.RData")
+```
+
+
+## Estimating the out-of-sample error
+```{r}
+validation_pred <- predict(model, validation)
+confusionMatrix(validation_pred, validation$classe)
+```
+
+The out of sample error in terms of accuracy is 0.996 - wich is very, very good. I guess we are overfitting to the 6 participants in the experiment. I am not convinced that predicting other persons ways of performing barbell lifts are equally good by this model.
+
+## Prediction of 20 test cases
+
+Trimming the test data set containing 20 observations to only include the predictor variables and the classe variable (unknown here)
+```{r}
+data_test_red <- data_test[, -which(names(data_test) %in% vars_remove)]
+test_results <- predict(model, data_test_red)
+```
